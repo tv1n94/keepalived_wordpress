@@ -1,0 +1,276 @@
+- name: install and setting ntp
+  hosts: all
+  become: yes
+  tasks:
+  - name: install ntp
+    apt:
+      name: ntp
+      update_cache: yes
+
+  - name: set timezone
+    shell: timedatectl set-timezone Europe/Moscow
+
+  - name: start ntp
+    systemd:
+        state: started
+        name: ntp
+
+  - name: enable ntp
+    systemd:
+        name: ntp
+        enabled: yes
+
+- name: update web vms and install keepalived
+  hosts: web1,web2
+  become: yes
+  tasks:
+  - name: update and install keepalived
+    apt:
+      name: keepalived
+      
+
+  - name: stopped keepalived service
+    systemd:
+      name: keepalived
+      state: stopped
+
+  - name: allow ufw
+    ufw:
+      state: enabled
+      policy: allow
+
+    #enable ufw with cli  
+    #ufw enable
+    #ufw allow ssh 
+    #ufw allow to 224.0.0.18
+    #ufw allow from 224.0.0.18
+    #ufw reload
+
+  - name: timeout 5 sec
+    shell: sleep 5
+
+- name: configure keepalived on web1
+  hosts: web1
+  become: yes
+  tasks:
+  - name: add setting for keepalived
+    shell: sudo sysctl net.ipv4.ip_nonlocal_bind=1
+
+  - name: copy keep_web1
+    copy:
+       src: config/keep_web1
+       dest: /etc/keepalived/keepalived.conf
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: start keepalived
+    systemd:
+        state: restarted
+        daemon_reload: yes
+        name: keepalived
+
+  - name: enable keepalived
+    systemd:
+        name: keepalived
+        enabled: yes
+  
+
+- name: configure keepalived on web2
+  hosts: web2
+  become: yes
+  tasks:
+  - name: add setting for keepalived
+    shell: sudo sysctl net.ipv4.ip_nonlocal_bind=1
+
+  - name: copy keep_web2
+    copy:
+       src: config/keep_web2
+       dest: /etc/keepalived/keepalived.conf
+       owner: root
+       group: root
+       mode: 0644
+  
+  - name: stop keepalived
+    systemd:
+        name: keepalived
+        state: stopped
+
+  - name: start keepalived
+    systemd:
+        state: started
+        name: keepalived
+  
+  - name: enable keepalived
+    systemd:
+        name: keepalived
+        enabled: yes
+
+- name: setup db server
+  hosts: db
+  become: yes
+  tasks:
+  - name: install mariadb
+    apt:
+      name:
+        - mariadb-server
+        - mariadb-client
+      state: latest
+
+  - name: restart mariadb
+    systemd:
+      state: restarted
+      daemon_reload: yes
+      name: mariadb
+      enabled: yes
+
+  - name: test mysql_secure_installation
+    shell: echo -e "otus \ny \notus \notus \ny \nn \ny \ny" | sudo mysql_secure_installation 
+  
+  - name: allow ufw
+    ufw:
+      state: enabled
+      policy: allow
+    
+  - name: create Wordpress database
+    shell: sudo mysql -u root --password=otus -e "CREATE DATABASE wordpress;"
+
+  - name: create db user
+    shell: sudo mysql -u root --password=otus -e "CREATE USER 'wordpressuser'@'localhost' IDENTIFIED BY 'otus';"
+
+  - name: Crant privileges for local user
+    shell: sudo mysql -u root --password=otus -e "GRANT ALL ON wordpress.* TO 'wordpressuser'@'localhost' IDENTIFIED BY 'otus' WITH GRANT OPTION;"
+
+  - name: Crant privileges for external user
+    shell: sudo mysql -u root --password=otus -e "GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpressuser'@'%' IDENTIFIED BY 'otus';"
+
+  - name: flush privileges
+    shell: sudo mysql -u root --password=otus -e "FLUSH PRIVILEGES;"
+    
+  - name: copy 50-server.cnf
+    copy:
+       src: config/50-server.cnf
+       dest: /etc/mysql/mariadb.conf.d/50-server.cnf
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: restart mysql
+    systemd:
+      state: restarted
+      daemon_reload: yes
+      name: mysql
+
+# Ещё один рестарт, чтобы вируальный адрес был только на одном хосте 
+- name: restart keepalived on web2
+  hosts: web2
+  become: yes
+  tasks:
+  - name: restart keepalived
+    shell: sudo systemctl restart keepalived    
+
+- name: install wordpress
+  hosts: web1,web2
+  become: yes
+  tasks:
+  - name: install nginx, php-fpm, wordpress
+    apt:
+      name:
+        - nginx
+        - php-fpm
+        - php-fpm 
+        - php-common 
+        - php-mbstring 
+        - php-xmlrpc 
+        - php-soap 
+        - php-gd 
+        - php-xml
+        - php-intl
+        - php-mysql
+        - php-cli
+        - php-ldap
+        - php-zip
+        - php-curl
+
+  - name: delete /etc/php/7.2/cli/php.ini
+    shell: rm -f /etc/php/7.2/cli/php.ini
+
+  - name: copy php.ini
+    copy:
+       src: config/php.ini
+       dest: /etc/php/7.2/cli/php.ini
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: download wordpress
+    shell: cd /tmp && wget https://wordpress.org/latest.tar.gz
+
+  - name: tar wordpress
+    shell: tar -zxf /tmp/latest.tar.gz
+
+  - name: mv wordpress to /var/www/html
+    shell: sudo mv wordpress /var/www/html/wordpress
+
+  - name: chown /var/www/html/wordpress/
+    shell: sudo chown -R www-data:www-data /var/www/html/wordpress/
+
+  - name: chmod /var/www/html/wordpress/
+    shell: sudo chmod -R 755 /var/www/html/wordpress/
+
+  - name: configure nginx
+    copy:
+       src: config/wordpress.conf
+       dest: /etc/nginx/sites-available/wordpress
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: enable wordpress site
+    shell: sudo ln -s /etc/nginx/sites-available/wordpress /etc/nginx/sites-enabled/
+
+  - name: configure wordpress
+    shell: sudo mv /var/www/html/wordpress/wp-config-sample.php /var/www/html/wordpress/wp-config.php
+
+  - name: delete /var/www/html/wordpress/wp-config.php
+    shell: rm -f /var/www/html/wordpress/wp-config.php
+
+  - name: configure wordpress
+    copy:
+       src: config/wp-config.php
+       dest: /var/www/html/wordpress/wp-config.php
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: restart nginx
+    systemd:
+      state: restarted
+      daemon_reload: yes
+      name: nginx
+
+- name: set up proxy pass
+  hosts: proxy
+  become: yes
+  tasks:
+  - name: install nginx
+    apt:
+      name:
+        - nginx
+
+  - name: delete old default file
+    shell: rm -rf /etc/nginx/sites-available/default
+
+  - name: configure proxy_pass nginx
+    copy:
+       src: config/default
+       dest: /etc/nginx/sites-available/default
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: restart nginx
+    systemd:
+      state: restarted
+      daemon_reload: yes
+      name: nginx
