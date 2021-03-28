@@ -1,5 +1,5 @@
 ah_dc = "ams1"
-ah_token = "JT6VuvLDhiTPeJ3gg6akHy1K"
+ah_token = "YOUR-TOKEN"
 ah_machine_type = "start-l"
 ah_image_type = "ubuntu-18_04-x64"
 private_key_path = "/home/alex/.ssh/id_rsa.pub"
